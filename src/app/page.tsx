@@ -52,10 +52,12 @@ const Foil = React.forwardRef(function Foil(
       clearcoatRoughness: { value: 1, min: 0, max: 1, step: 0.01 },
     }
   )
-  const { sizeX, sizeY } = useControls("Foil Size", {
-    sizeX: { value: 0.37, min: 0.2, max: 2, step: 0.01 },
-    sizeY: { value: 0.473, min: 0.2, max: 2, step: 0.01 },
-  })
+  const [sizeX] = useState(0.37)
+  const [sizeY] = useState(0.473)
+  // const { sizeX, sizeY } = useControls("Foil Size", {
+  //   sizeX: { value: 0.37, min: 0.2, max: 2, step: 0.01 },
+  //   sizeY: { value: 0.473, min: 0.2, max: 2, step: 0.01 },
+  // })
 
   useEffect(() => {
     scratchCanvas.width = 512
@@ -311,35 +313,36 @@ export default function Home() {
   }
 
   return (
-    <div
-      className="min-w-screen min-h-screen flex items-center justify-center flex-col"
-      id="canvas-container"
-    >
-      <div className="w-full flex justify-center">
-        <Button onClick={() => setScratchEnabled((prev) => !prev)}>
-          {scratchEnabled ? "Enable Rotate" : "Scratch"}
-        </Button>
-      </div>
-      <Canvas
-        camera={{ position: [0, 0, 0.8], fov: 75 }}
-        style={{ width: "100%", height: "90vh" }}
-        onPointerDown={handlePointerDown}
-        onPointerUp={handlePointerUp}
-        onPointerMove={handlePointerMove}
-      >
-        <Scene
-          scratchEnabled={scratchEnabled}
-          onScratchComplete={handleScratchComplete}
-          foilVisible={foilVisible}
-          foilRef={foilRef}
-        />
-      </Canvas>
-      {scratchComplete && (
-        <div className="absolute bottom-10">
-          <Button onClick={handleDoneClick}>Done</Button>
+    <>
+      <div className="absolute w-fit h-fit top-10 left-1/2 transform -translate-x-1/2 z-50">
+        <div className="flex flex-row gap-3 p-4">
+          <Button onClick={() => setScratchEnabled((prev) => !prev)}>
+            {scratchEnabled ? "Enable Rotate" : "Scratch"}
+          </Button>
+          {scratchComplete && <Button onClick={handleDoneClick}>Done</Button>}
         </div>
-      )}
-      <Leva />
-    </div>
+      </div>
+      <div
+        className="min-w-screen min-h-screen flex items-center justify-center flex-col"
+        id="canvas-container"
+      >
+        <Canvas
+          camera={{ position: [0, 0, 0.8], fov: 75 }}
+          style={{ width: "100%", height: "100vh" }}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+          onPointerMove={handlePointerMove}
+        >
+          <Scene
+            scratchEnabled={scratchEnabled}
+            onScratchComplete={handleScratchComplete}
+            foilVisible={foilVisible}
+            foilRef={foilRef}
+          />
+        </Canvas>
+
+        <Leva />
+      </div>
+    </>
   )
 }
