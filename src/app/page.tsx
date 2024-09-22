@@ -6,17 +6,17 @@ import * as THREE from "three"
 import { Leva, useControls } from "leva"
 import { Button } from "@/components/ui/button"
 
-// Define the type for props
 interface FoilProps {
   position: [number, number, number]
   scratchEnabled: boolean
+  onScratchComplete: () => void
 }
 
 interface PaperProps {
   position: [number, number, number]
 }
 
-function Foil({ position, scratchEnabled }: FoilProps) {
+function Foil({ position, scratchEnabled, onScratchComplete }: FoilProps) {
   const ref = useRef<THREE.Mesh>(null)
   const scratchCanvas = useMemo(() => document.createElement("canvas"), [])
   const [scratchContext, setScratchContext] =
@@ -26,12 +26,10 @@ function Foil({ position, scratchEnabled }: FoilProps) {
     null
   )
 
-  // Load textures
   const foilNormal = useLoader(THREE.TextureLoader, "/glitterNormalMap2.png")
   const rainbowTexture = useLoader(THREE.TextureLoader, "/rainbowGradient.png")
   const environmentMap = useLoader(THREE.TextureLoader, "/envMap.png")
 
-  // Leva UI controls
   const { metalness, roughness, clearcoat, clearcoatRoughness } = useControls(
     "Foil Texture",
     {
@@ -46,7 +44,6 @@ function Foil({ position, scratchEnabled }: FoilProps) {
     sizeY: { value: 0.473, min: 0.2, max: 2, step: 0.01 },
   })
 
-  // Initialize scratch canvas and mask texture
   useEffect(() => {
     scratchCanvas.width = 512
     scratchCanvas.height = 512
@@ -66,14 +63,12 @@ function Foil({ position, scratchEnabled }: FoilProps) {
     setMaskTexture(texture)
   }, [scratchCanvas])
 
-  // Update texture repeat
   useEffect(() => {
     foilNormal.wrapS = foilNormal.wrapT = THREE.RepeatWrapping
     foilNormal.repeat.set(sizeX / sizeY, 1)
     rainbowTexture.wrapS = rainbowTexture.wrapT = THREE.ClampToEdgeWrapping
   }, [sizeX, sizeY, rainbowTexture, foilNormal])
 
-  // Handle pointer events
   const handlePointerDown = () => {
     if (!scratchEnabled) return
     setIsScratching(true)
@@ -92,7 +87,7 @@ function Foil({ position, scratchEnabled }: FoilProps) {
     if (!uv) return
 
     const x = uv.x * scratchCanvas.width
-    const y = (1 - uv.y) * scratchCanvas.height // Flip Y
+    const y = (1 - uv.y) * scratchCanvas.height
 
     scratchContext.globalCompositeOperation = "destination-out"
     scratchContext.beginPath()
@@ -100,9 +95,29 @@ function Foil({ position, scratchEnabled }: FoilProps) {
     scratchContext.fill()
 
     maskTexture.needsUpdate = true
+
+    // Calculate the scratched area
+    const imageData = scratchContext.getImageData(
+      0,
+      0,
+      scratchCanvas.width,
+      scratchCanvas.height
+    )
+    const totalPixels = scratchCanvas.width * scratchCanvas.height
+    let clearedPixels = 0
+
+    for (let i = 0; i < imageData.data.length; i += 4) {
+      if (imageData.data[i + 3] === 0) clearedPixels++ // Check alpha channel
+    }
+
+    const percentageScratched = (clearedPixels / totalPixels) * 100
+
+    if (percentageScratched >= 80) {
+      onScratchComplete()
+    }
   }
 
-  if (!maskTexture) return null // Wait until maskTexture is initialized
+  if (!maskTexture) return null
 
   return (
     <mesh
@@ -124,7 +139,7 @@ function Foil({ position, scratchEnabled }: FoilProps) {
         clearcoatRoughness={clearcoatRoughness}
         transparent={true}
         alphaMap={maskTexture}
-        alphaTest={0.5} // Add alphaTest
+        alphaTest={0.5}
       />
     </mesh>
   )
@@ -154,12 +169,26 @@ function Paper({ position }: PaperProps) {
   )
 }
 
-function Scene({ scratchEnabled }: { scratchEnabled: boolean }) {
+function Scene({
+  scratchEnabled,
+  onScratchComplete,
+  foilVisible,
+}: {
+  scratchEnabled: boolean
+  onScratchComplete: () => void
+  foilVisible: boolean
+}) {
   return (
     <>
       <group>
         <Paper position={[0, 0, 0.01]} />
-        <Foil position={[0, -0.248, 0.011]} scratchEnabled={scratchEnabled} />
+        {foilVisible && (
+          <Foil
+            position={[0, -0.248, 0.011]}
+            scratchEnabled={scratchEnabled}
+            onScratchComplete={onScratchComplete}
+          />
+        )}
       </group>
 
       <ambientLight intensity={Math.PI / 2} />
@@ -196,6 +225,16 @@ function Scene({ scratchEnabled }: { scratchEnabled: boolean }) {
 
 export default function Home() {
   const [scratchEnabled, setScratchEnabled] = useState(false)
+  const [scratchComplete, setScratchComplete] = useState(false)
+  const [foilVisible, setFoilVisible] = useState(true)
+
+  const handleScratchComplete = () => {
+    setScratchComplete(true)
+  }
+
+  const handleDoneClick = () => {
+    setFoilVisible(false)
+  }
 
   return (
     <div
@@ -211,8 +250,17 @@ export default function Home() {
         camera={{ position: [0, 0, 0.8], fov: 75 }}
         style={{ width: "100%", height: "90vh" }}
       >
-        <Scene scratchEnabled={scratchEnabled} />
+        <Scene
+          scratchEnabled={scratchEnabled}
+          onScratchComplete={handleScratchComplete}
+          foilVisible={foilVisible}
+        />
       </Canvas>
+      {scratchComplete && (
+        <div className="absolute bottom-10">
+          <Button onClick={handleDoneClick}>Done</Button>
+        </div>
+      )}
       <Leva />
     </div>
   )
