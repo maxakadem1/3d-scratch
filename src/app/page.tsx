@@ -1,7 +1,6 @@
 "use client"
-
-import { Canvas, useLoader, useFrame } from "@react-three/fiber"
-import { useEffect, useRef, useState } from "react"
+import { Canvas, useLoader, ThreeEvent } from "@react-three/fiber"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { ContactShadows, Environment, OrbitControls } from "@react-three/drei"
 import * as THREE from "three"
 import { Leva, useControls } from "leva"
@@ -10,21 +9,29 @@ import { Button } from "@/components/ui/button"
 // Define the type for props
 interface FoilProps {
   position: [number, number, number]
+  scratchEnabled: boolean
 }
 
 interface PaperProps {
   position: [number, number, number]
 }
 
-function Foil({ position }: FoilProps) {
+function Foil({ position, scratchEnabled }: FoilProps) {
   const ref = useRef<THREE.Mesh>(null)
+  const scratchCanvas = useMemo(() => document.createElement("canvas"), [])
+  const [scratchContext, setScratchContext] =
+    useState<CanvasRenderingContext2D | null>(null)
+  const [isScratching, setIsScratching] = useState(false)
+  const [maskTexture, setMaskTexture] = useState<THREE.CanvasTexture | null>(
+    null
+  )
 
-  // Load textures: normal map for the foil and rainbow gradient for color
-  const foilNormal = useLoader(THREE.TextureLoader, "/glitterNormalMap.png") // Normal map
-  const rainbowTexture = useLoader(THREE.TextureLoader, "/rainbowGradient.png") // Rainbow gradient texture
-  const environmentMap = useLoader(THREE.TextureLoader, "/envMap.png") // Environment map for reflections
+  // Load textures
+  const foilNormal = useLoader(THREE.TextureLoader, "/glitterNormalMap.png")
+  const rainbowTexture = useLoader(THREE.TextureLoader, "/rainbowGradient.png")
+  const environmentMap = useLoader(THREE.TextureLoader, "/envMap.png")
 
-  // Leva UI controls for material properties
+  // Leva UI controls
   const { metalness, roughness, clearcoat, clearcoatRoughness } = useControls(
     "Foil Texture",
     {
@@ -39,40 +46,94 @@ function Foil({ position }: FoilProps) {
     sizeY: { value: 0.473, min: 0.2, max: 2, step: 0.01 },
   })
 
-  // Update texture repeat to prevent normal map stretching, but allow rainbow texture to stretch
+  // Initialize scratch canvas and mask texture
   useEffect(() => {
-    // Set repeat for foil normal map to prevent stretching
+    scratchCanvas.width = 512
+    scratchCanvas.height = 512
+    const ctx = scratchCanvas.getContext("2d")
+    setScratchContext(ctx)
+
+    if (ctx) {
+      ctx.fillStyle = "white"
+      ctx.fillRect(0, 0, scratchCanvas.width, scratchCanvas.height)
+    }
+
+    const texture = new THREE.CanvasTexture(scratchCanvas)
+    texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    texture.format = THREE.RGBAFormat
+    setMaskTexture(texture)
+  }, [scratchCanvas])
+
+  // Update texture repeat
+  useEffect(() => {
     foilNormal.wrapS = foilNormal.wrapT = THREE.RepeatWrapping
     foilNormal.repeat.set(sizeX / sizeY, 1)
-
-    // No repeat adjustments for rainbow texture to allow it to stretch
     rainbowTexture.wrapS = rainbowTexture.wrapT = THREE.ClampToEdgeWrapping
   }, [sizeX, sizeY, rainbowTexture, foilNormal])
 
+  // Handle pointer events
+  const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
+    if (!scratchEnabled) return
+    setIsScratching(true)
+  }
+
+  const handlePointerUp = (event: ThreeEvent<PointerEvent>) => {
+    if (!scratchEnabled) return
+    setIsScratching(false)
+  }
+
+  const handlePointerMove = (event: ThreeEvent<PointerEvent>) => {
+    if (!scratchEnabled || !isScratching || !scratchContext || !maskTexture)
+      return
+
+    const uv = event.uv
+    if (!uv) return
+
+    const x = uv.x * scratchCanvas.width
+    const y = (1 - uv.y) * scratchCanvas.height // Flip Y
+
+    scratchContext.globalCompositeOperation = "destination-out"
+    scratchContext.beginPath()
+    scratchContext.arc(x, y, 20, 0, Math.PI * 2)
+    scratchContext.fill()
+
+    maskTexture.needsUpdate = true
+  }
+
+  if (!maskTexture) return null // Wait until maskTexture is initialized
+
   return (
-    <mesh position={position} ref={ref}>
-      <planeGeometry args={[sizeX, sizeY]} /> {/* Smaller foil on top of A4 */}
+    <mesh
+      position={position}
+      ref={ref}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onPointerMove={handlePointerMove}
+    >
+      <planeGeometry args={[sizeX, sizeY]} />
       <meshPhysicalMaterial
-        side={THREE.DoubleSide} // Apply on both sides
-        map={rainbowTexture} // Apply rainbow gradient texture, allowing it to stretch
-        normalMap={foilNormal} // Add normal map for depth and glitter bumps
-        envMap={environmentMap} // Environment map for reflections
-        metalness={metalness} // Controlled by Leva for high reflectivity
-        roughness={roughness} // Controlled by Leva for a smooth reflective surface
-        clearcoat={clearcoat} // Adds a shiny clear coat layer
-        clearcoatRoughness={clearcoatRoughness} // Slight roughness on the clear coat
-        transparent={false} // Ensure transparency is disabled
-        alphaTest={0} // Prevent any transparency from alpha
+        side={THREE.DoubleSide}
+        map={rainbowTexture}
+        normalMap={foilNormal}
+        envMap={environmentMap}
+        metalness={metalness}
+        roughness={roughness}
+        clearcoat={clearcoat}
+        clearcoatRoughness={clearcoatRoughness}
+        transparent={true}
+        alphaMap={maskTexture}
+        alphaTest={0.5} // Add alphaTest
       />
     </mesh>
   )
 }
 
 function Paper({ position }: PaperProps) {
-  const ticketTexture = useLoader(THREE.TextureLoader, "/lotteryFront2.png") // Ticket texture
+  const ticketTexture = useLoader(THREE.TextureLoader, "/lotteryFront.png")
   const [imageSize, setImageSize] = useState<[number, number]>([1, 1])
 
-  // When the texture is loaded, update the image size
   useEffect(() => {
     if (ticketTexture.image) {
       const { width, height } = ticketTexture.image
@@ -83,7 +144,6 @@ function Paper({ position }: PaperProps) {
 
   return (
     <mesh position={position}>
-      {/* Adjust planeGeometry to match the texture's aspect ratio */}
       <planeGeometry args={imageSize} />
       <meshStandardMaterial
         side={THREE.DoubleSide}
@@ -94,26 +154,12 @@ function Paper({ position }: PaperProps) {
   )
 }
 
-function Scene() {
-  const rotation = useRef({ x: 0, y: 0 })
-  const groupRef = useRef<THREE.Group>(null)
-
-  useFrame(() => {
-    if (groupRef.current) {
-      groupRef.current.rotation.x = rotation.current.x
-      groupRef.current.rotation.y = rotation.current.y
-    }
-  })
-
+function Scene({ scratchEnabled }: { scratchEnabled: boolean }) {
   return (
     <>
-      {/* Group both Paper and Foil */}
-      <group ref={groupRef}>
-        {/* A4 Paper */}
+      <group>
         <Paper position={[0, 0, 0.01]} />
-
-        {/* Foil slightly above the paper */}
-        <Foil position={[0, -0.248, 0.011]} />
+        <Foil position={[0, -0.248, 0.011]} scratchEnabled={scratchEnabled} />
       </group>
 
       <ambientLight intensity={Math.PI / 2} />
@@ -138,30 +184,36 @@ function Scene() {
         far={4}
       />
       <Environment preset="city" />
-      <OrbitControls minDistance={0.2} maxDistance={3} makeDefault />
+      <OrbitControls
+        minDistance={0.2}
+        maxDistance={3}
+        enabled={!scratchEnabled}
+        makeDefault
+      />
     </>
   )
 }
 
 export default function Home() {
+  const [scratchEnabled, setScratchEnabled] = useState(false)
+
   return (
     <div
       className="min-w-screen min-h-screen flex items-center justify-center flex-col"
       id="canvas-container"
     >
       <div className="w-full flex justify-center">
-        <Button>Scratch</Button>
+        <Button onClick={() => setScratchEnabled((prev) => !prev)}>
+          {scratchEnabled ? "Enable Rotate" : "Scratch"}
+        </Button>
       </div>
       <Canvas
         camera={{ position: [0, 0, 0.8], fov: 75 }}
         style={{ width: "100%", height: "90vh" }}
-        onPointerDown={(event) => {
-          event.stopPropagation()
-        }}
       >
-        <Scene />
+        <Scene scratchEnabled={scratchEnabled} />
       </Canvas>
-      <Leva /> {/* Render Leva UI */}
+      <Leva />
     </div>
   )
 }
