@@ -1,6 +1,12 @@
 "use client"
-import { Canvas, useLoader, ThreeEvent } from "@react-three/fiber"
-import { useEffect, useMemo, useRef, useState } from "react"
+import React, {
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
+import { Canvas, useLoader, useThree } from "@react-three/fiber"
 import { ContactShadows, Environment, OrbitControls } from "@react-three/drei"
 import * as THREE from "three"
 import { Leva, useControls } from "leva"
@@ -16,12 +22,19 @@ interface PaperProps {
   position: [number, number, number]
 }
 
-function Foil({ position, scratchEnabled, onScratchComplete }: FoilProps) {
-  const ref = useRef<THREE.Mesh>(null)
+interface FoilHandle {
+  updateScratchAtScreenPosition: (clientX: number, clientY: number) => void
+  resetPreviousPoint: () => void
+}
+
+const Foil = React.forwardRef(function Foil(
+  { position, scratchEnabled, onScratchComplete }: FoilProps,
+  ref
+) {
+  const meshRef = useRef<THREE.Mesh>(null)
   const scratchCanvas = useMemo(() => document.createElement("canvas"), [])
   const [scratchContext, setScratchContext] =
     useState<CanvasRenderingContext2D | null>(null)
-  const [isScratching, setIsScratching] = useState(false)
   const [maskTexture, setMaskTexture] = useState<THREE.CanvasTexture | null>(
     null
   )
@@ -69,31 +82,31 @@ function Foil({ position, scratchEnabled, onScratchComplete }: FoilProps) {
     rainbowTexture.wrapS = rainbowTexture.wrapT = THREE.ClampToEdgeWrapping
   }, [sizeX, sizeY, rainbowTexture, foilNormal])
 
-  const handlePointerDown = () => {
-    if (!scratchEnabled) return
-    setIsScratching(true)
-  }
+  const previousPoint = useRef<{ x: number; y: number } | null>(null)
 
-  const handlePointerUp = () => {
-    if (!scratchEnabled) return
-    setIsScratching(false)
-  }
-
-  const handlePointerMove = (event: ThreeEvent<PointerEvent>) => {
-    if (!scratchEnabled || !isScratching || !scratchContext || !maskTexture)
-      return
-
-    const uv = event.uv
-    if (!uv) return
+  const updateScratch = (uv: { x: number; y: number }) => {
+    if (!scratchEnabled || !scratchContext || !maskTexture) return
 
     const x = uv.x * scratchCanvas.width
     const y = (1 - uv.y) * scratchCanvas.height
 
     scratchContext.globalCompositeOperation = "destination-out"
-    scratchContext.beginPath()
-    scratchContext.arc(x, y, 20, 0, Math.PI * 2)
-    scratchContext.fill()
+    scratchContext.lineWidth = 40
+    scratchContext.lineCap = "round"
+    scratchContext.lineJoin = "round"
 
+    if (previousPoint.current) {
+      scratchContext.beginPath()
+      scratchContext.moveTo(previousPoint.current.x, previousPoint.current.y)
+      scratchContext.lineTo(x, y)
+      scratchContext.stroke()
+    } else {
+      scratchContext.beginPath()
+      scratchContext.arc(x, y, 20, 0, Math.PI * 2, true)
+      scratchContext.fill()
+    }
+
+    previousPoint.current = { x, y }
     maskTexture.needsUpdate = true
 
     // Calculate the scratched area
@@ -111,22 +124,57 @@ function Foil({ position, scratchEnabled, onScratchComplete }: FoilProps) {
     }
 
     const percentageScratched = (clearedPixels / totalPixels) * 100
-
     if (percentageScratched >= 80) {
       onScratchComplete()
     }
   }
 
+  const { camera, gl } = useThree()
+  const plane = useMemo(
+    () => new THREE.Plane(new THREE.Vector3(0, 0, 1), -position[2]),
+    [position]
+  )
+  const raycaster = useMemo(() => new THREE.Raycaster(), [])
+
+  useImperativeHandle(ref, () => ({
+    updateScratchAtScreenPosition(clientX: number, clientY: number) {
+      const mouse = new THREE.Vector2()
+      mouse.x = (clientX / gl.domElement.clientWidth) * 2 - 1
+      mouse.y = -(clientY / gl.domElement.clientHeight) * 2 + 1
+
+      raycaster.setFromCamera(mouse, camera)
+      const intersectionPoint = new THREE.Vector3()
+      const intersects = raycaster.ray.intersectPlane(plane, intersectionPoint)
+
+      if (intersects && intersectionPoint && meshRef.current) {
+        // Convert the intersection point to local space
+        const foilPosition = meshRef.current.worldToLocal(
+          intersectionPoint.clone()
+        )
+
+        const width = sizeX // Use sizeX directly
+        const height = sizeY // Use sizeY directly
+
+        const uv = {
+          x: (foilPosition.x + width / 2) / width,
+          y: (foilPosition.y + height / 2) / height,
+        }
+
+        if (uv.x >= 0 && uv.x <= 1 && uv.y >= 0 && uv.y <= 1) {
+          updateScratch(uv)
+        }
+      }
+    },
+
+    resetPreviousPoint() {
+      previousPoint.current = null
+    },
+  }))
+
   if (!maskTexture) return null
 
   return (
-    <mesh
-      position={position}
-      ref={ref}
-      onPointerDown={handlePointerDown}
-      onPointerUp={handlePointerUp}
-      onPointerMove={handlePointerMove}
-    >
+    <mesh ref={meshRef} position={position}>
       <planeGeometry args={[sizeX, sizeY]} />
       <meshPhysicalMaterial
         side={THREE.DoubleSide}
@@ -143,7 +191,7 @@ function Foil({ position, scratchEnabled, onScratchComplete }: FoilProps) {
       />
     </mesh>
   )
-}
+})
 
 function Paper({ position }: PaperProps) {
   const ticketTexture = useLoader(THREE.TextureLoader, "/lotteryFront.png")
@@ -173,10 +221,12 @@ function Scene({
   scratchEnabled,
   onScratchComplete,
   foilVisible,
+  foilRef,
 }: {
   scratchEnabled: boolean
   onScratchComplete: () => void
   foilVisible: boolean
+  foilRef: React.Ref<unknown>
 }) {
   return (
     <>
@@ -184,6 +234,7 @@ function Scene({
         <Paper position={[0, 0, 0.01]} />
         {foilVisible && (
           <Foil
+            ref={foilRef}
             position={[0, -0.248, 0.011]}
             scratchEnabled={scratchEnabled}
             onScratchComplete={onScratchComplete}
@@ -227,6 +278,8 @@ export default function Home() {
   const [scratchEnabled, setScratchEnabled] = useState(false)
   const [scratchComplete, setScratchComplete] = useState(false)
   const [foilVisible, setFoilVisible] = useState(true)
+  const [isScratching, setIsScratching] = useState(false)
+  const foilRef = useRef<FoilHandle>(null)
 
   const handleScratchComplete = () => {
     setScratchComplete(true)
@@ -234,6 +287,27 @@ export default function Home() {
 
   const handleDoneClick = () => {
     setFoilVisible(false)
+  }
+
+  const handlePointerDown = () => {
+    setIsScratching(true)
+  }
+
+  const handlePointerUp = () => {
+    setIsScratching(false)
+    if (foilRef.current) {
+      foilRef.current.resetPreviousPoint()
+    }
+  }
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!isScratching) return
+    if (foilRef.current && foilVisible) {
+      const rect = event.currentTarget.getBoundingClientRect()
+      const x = event.clientX - rect.left
+      const y = event.clientY - rect.top
+      foilRef.current.updateScratchAtScreenPosition(x, y)
+    }
   }
 
   return (
@@ -249,11 +323,15 @@ export default function Home() {
       <Canvas
         camera={{ position: [0, 0, 0.8], fov: 75 }}
         style={{ width: "100%", height: "90vh" }}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerMove={handlePointerMove}
       >
         <Scene
           scratchEnabled={scratchEnabled}
           onScratchComplete={handleScratchComplete}
           foilVisible={foilVisible}
+          foilRef={foilRef}
         />
       </Canvas>
       {scratchComplete && (
