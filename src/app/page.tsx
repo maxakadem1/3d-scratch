@@ -27,7 +27,7 @@ function Foil({ position, scratchEnabled }: FoilProps) {
   )
 
   // Load textures
-  const foilNormal = useLoader(THREE.TextureLoader, "/glitterNormalMap.png")
+  const foilNormal = useLoader(THREE.TextureLoader, "/glitterNormalMap2.png")
   const rainbowTexture = useLoader(THREE.TextureLoader, "/rainbowGradient.png")
   const environmentMap = useLoader(THREE.TextureLoader, "/envMap.png")
 
@@ -74,12 +74,12 @@ function Foil({ position, scratchEnabled }: FoilProps) {
   }, [sizeX, sizeY, rainbowTexture, foilNormal])
 
   // Handle pointer events
-  const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
+  const handlePointerDown = () => {
     if (!scratchEnabled) return
     setIsScratching(true)
   }
 
-  const handlePointerUp = (event: ThreeEvent<PointerEvent>) => {
+  const handlePointerUp = () => {
     if (!scratchEnabled) return
     setIsScratching(false)
   }
